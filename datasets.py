@@ -15,6 +15,8 @@ def get_dataset(task: str, cfg, shuffle_train=True, shuffle_test=False, return_d
             dicom_info_csv=str(project_root / "data/csv/dicom_info.csv"),
             mode="full",
             return_mask=False,
+            return_pair=True, # Enable paired dataset for restoration
+            noise_level=0.2, # Configure noise level (can be moved to cfg later)
             resize_hw=resize_hw
         )
         test_dataset = CBISDDSM(
@@ -23,6 +25,8 @@ def get_dataset(task: str, cfg, shuffle_train=True, shuffle_test=False, return_d
             dicom_info_csv=str(project_root / "data/csv/dicom_info.csv"),
             mode="full",
             return_mask=False,
+            return_pair=True,
+            noise_level=0.2,
             resize_hw=resize_hw
         )
     else:

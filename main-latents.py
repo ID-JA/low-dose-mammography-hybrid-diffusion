@@ -90,17 +90,22 @@ if __name__ == '__main__':
     print("> Generating latent train dataset")
     pb = tqdm(train_loader, disable=args.no_tqdm)
     nb_processed = 0
-    for i, (x, _) in enumerate(pb):
+    for i, batch in enumerate(pb):
+        if len(batch) == 3:
+            x, _, _ = batch
+        else:
+             x, _ = batch
+
         with torch.no_grad(), torch.amp.autocast('cuda'):
             x = x.to(device)
             idx = net(x)[-1][::-1]
 
         bs = idx[0].shape[0]
-        batch = []
+        batch_out = []
         for si in range(bs):
-            batch.append([c[si] for c in idx])
+            batch_out.append([c[si] for c in idx])
 
-        for b in batch:
+        for b in batch_out:
             b = [bi.cpu().numpy().astype(np.int16) for bi in b]
             torch.save(b, train_dataset_path / f"{str(nb_processed).zfill(7)}.pt")
             nb_processed += 1
@@ -111,18 +116,23 @@ if __name__ == '__main__':
     print("> Generating latent test dataset")
     pb = tqdm(test_loader, disable=args.no_tqdm)
     nb_processed = 0
-    for i, (x, _) in enumerate(pb):
+    for i, batch in enumerate(pb):
+        if len(batch) == 3:
+            x, _, _ = batch
+        else:
+             x, _ = batch
+
         with torch.no_grad(), torch.amp.autocast('cuda'):
             x = x.to(device)
             idx = net(x)[-1][::-1]
 
         bs = idx[0].shape[0]
-        batch = []
+        batch_out = []
 
         for si in range(bs):
-            batch.append([c[si] for c in idx])
+            batch_out.append([c[si] for c in idx])
 
-        for b in batch:
+        for b in batch_out:
             b = [bi.cpu().numpy().astype(np.int16) for bi in b]
             torch.save(b, test_dataset_path / f"{str(nb_processed).zfill(7)}.pt")
             nb_processed += 1

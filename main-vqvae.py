@@ -51,8 +51,14 @@ if __name__ == '__main__':
         nb_generated = 0
         imgs = []
         pb = tqdm(total=cfg.batch_size)
-        for x, _ in test_loader:
-            *_, y = trainer.eval(x)
+        for batch in test_loader:
+            if len(batch) == 3:
+                x, target, _ = batch
+            else:
+                x, _ = batch
+                target = None # reconstruction
+
+            loss, r_loss, l_loss, y = trainer.eval(x, target)
             imgs.append(y.cpu())
             nb_generated += y.shape[0]
             pb.update(y.shape[0])
@@ -84,8 +90,29 @@ if __name__ == '__main__':
         epoch_loss, epoch_r_loss, epoch_l_loss = 0.0, 0.0, 0.0
         epoch_start_time = time.time()
         pb = tqdm(train_loader, disable=args.no_tqdm)
-        for i, (x, _) in enumerate(pb):
-            loss, r_loss, l_loss, _ = trainer.train(x)
+        for i, batch in enumerate(pb):
+            if len(batch) == 3 and not isinstance(batch[1], dict):
+                # (degraded, clean, meta)
+                x, target, meta = batch
+            else:
+                # (x, meta) or (x, mask, meta) - ignoring mask logic for simple VQVAE training here
+                # If len is 2: x, meta
+                # If len is 3 and 2nd is mask: x, mask, meta.
+                # Simplification: assume if 3rd is meta, unpack accordingly.
+                # For now, let's stick to the structure we expect.
+                if len(batch) == 3:
+                     # Could be (x, mask, meta) or (degraded, clean, meta)
+                     # In CBISDDSM with pair=True, it returns (deg, clean, meta). Clean is Tensor.
+                     # With mask=True, returns (x, mask, meta). Mask is Tensor.
+                     x, target, _ = batch
+                     if isinstance(target, dict): # Should not happen based on CBISDDSM logic order
+                         x, _ = batch 
+                         target = None
+                else:
+                    x, _ = batch
+                    target = None
+
+            loss, r_loss, l_loss, _ = trainer.train(x, target)
             epoch_loss += loss
             epoch_r_loss += r_loss
             epoch_l_loss += l_loss
@@ -94,14 +121,32 @@ if __name__ == '__main__':
         
         epoch_loss, epoch_r_loss, epoch_l_loss = 0.0, 0.0, 0.0
         pb = tqdm(test_loader, disable=args.no_tqdm)
-        for i, (x, _) in enumerate(pb):
-            loss, r_loss, l_loss, y = trainer.eval(x)
+        for i, batch in enumerate(pb):
+            if len(batch) == 3 and not isinstance(batch[1], dict):
+                x, target, _ = batch
+            else:
+                if len(batch) == 3:
+                     x, target, _ = batch
+                else:
+                    x, _ = batch
+                    target = None
+
+            loss, r_loss, l_loss, y = trainer.eval(x, target)
             epoch_loss += loss
             epoch_r_loss += r_loss
             epoch_l_loss += l_loss
             pb.set_description(f"evaluation: {epoch_loss / (i+1)} [r_loss: {epoch_r_loss/ (i+1)}, l_loss: {epoch_l_loss / (i+1)}]")
             if i == 0 and not args.no_save and eid % cfg.image_frequency == 0:
-                save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
+                # Prepare a grid: Top row: Input, Middle: Target (if exists), Bottom: Output
+                if target is not None:
+                     vis = torch.cat([x, target, y], dim=0) # Concatenate along batch? No, dim=0 creates one long column of batches.
+                     # Better: Create a row per sample.
+                     # save_image expects (B, C, H, W).
+                     # We want to show side-by-side. 
+                     # Let's just save y for now to avoid breaking shape logic, OR simpler:
+                     save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
+                else:
+                     save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
 
         if eid % cfg.checkpoint_frequency == 0 and not args.no_save:
             trainer.save_checkpoint(chk_dir / f"{args.task}-state-dict-{str(eid).zfill(4)}.pt")

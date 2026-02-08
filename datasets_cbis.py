@@ -10,7 +10,7 @@ from PIL import Image
 import torch
 from torchvision import transforms
 from torch.utils.data import Dataset
-
+from preprocessing.degrade import simulate_low_dose
 
 @dataclass
 class CBISPathResolver:
@@ -134,12 +134,8 @@ class CBISDDSM(Dataset):
     """
     Improved CBIS-DDSM loader using dicom_info.csv mapping.
     Fast + deterministic (no glob searching).
-
-    Returns:
-        x:   Tensor [1,H,W] float32 in [0,1]
-        meta dict
-    Optionally:
-        mask: Tensor [1,H,W] float32 {0,1}
+    
+    Supports 'paired' mode: returns (degraded_x, clean_x, meta).
     """
 
     def __init__(
@@ -149,11 +145,15 @@ class CBISDDSM(Dataset):
         dicom_info_csv: str,
         mode: str = "full", 
         return_mask: bool = False,
+        return_pair: bool = False,
+        noise_level: float = 0.2,
         resize_hw: Optional[Tuple[int, int]] = (1024, 768),
     ):
         self.df = pd.read_csv(case_csv_path)
         self.jpeg_root = Path(jpeg_root)
         self.return_mask = return_mask
+        self.return_pair = return_pair
+        self.noise_level = noise_level
         self.resize_hw = resize_hw
 
         assert mode in ["full", "crop"], "mode must be 'full' or 'crop'"
@@ -191,7 +191,7 @@ class CBISDDSM(Dataset):
             img_path = self.resolver.resolve(case_path, kind="crop")
 
         img = Image.open(img_path).convert("L")
-        x = self.transform(img)
+        clean_x = self.transform(img)
 
         meta = {
             "patient_id": row.get("patient_id", None),
@@ -204,16 +204,20 @@ class CBISDDSM(Dataset):
             "case_path": str(case_path),
         }
 
+        if self.return_pair:
+            degraded_x = simulate_low_dose(clean_x, noise_level=self.noise_level)
+            return degraded_x, clean_x, meta
+
         if not self.return_mask:
-            return x, meta
+            return clean_x, meta
 
         mask_case_path = row.get(self.mask_col, None)
         if pd.isna(mask_case_path) or mask_case_path is None:
-            mask = torch.zeros_like(x)
+            mask = torch.zeros_like(clean_x)
         else:
             mask_path = self.resolver.resolve(mask_case_path, kind="mask")
             mask_img = Image.open(mask_path).convert("L")
             mask = self.transform(mask_img)
             mask = (mask > 0).float()
 
-        return x, mask, meta
+        return clean_x, mask, meta

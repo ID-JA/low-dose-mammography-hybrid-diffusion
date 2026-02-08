@@ -26,18 +26,22 @@ class VQVAETrainer:
         self.update_frequency = math.ceil(cfg.batch_size / cfg.mini_batch_size)
         self.train_steps = 0
 
-    def _calculate_loss(self, x: torch.FloatTensor):
+    def _calculate_loss(self, x: torch.FloatTensor, target: torch.FloatTensor = None):
+        if target is None:
+            target = x
         x = x.to(self.device)
+        target = target.to(self.device)
+
         y, d, _, _, _ = self.net(x)
-        r_loss, l_loss = y.sub(x).pow(2).mean(), sum(d)
+        r_loss, l_loss = y.sub(target).pow(2).mean(), sum(d)
         loss = r_loss + self.beta*l_loss
         return loss, r_loss, l_loss, y
 
     # another function can then call step
-    def train(self, x: torch.FloatTensor):
+    def train(self, x: torch.FloatTensor, target: torch.FloatTensor = None):
         self.net.train()
         with torch.amp.autocast("cuda", enabled=self.scaler.is_enabled()):
-            loss, r_loss, l_loss, y = self._calculate_loss(x)
+            loss, r_loss, l_loss, y = self._calculate_loss(x, target)
         self.scaler.scale(loss / self.update_frequency).backward()
 
         self.train_steps += 1
@@ -55,10 +59,10 @@ class VQVAETrainer:
         self.scaler.update()
 
     @torch.no_grad()
-    def eval(self, x: torch.FloatTensor):
+    def eval(self, x: torch.FloatTensor, target: torch.FloatTensor = None):
         self.net.eval()
         # self.opt.zero_grad()
-        loss, r_loss, l_loss, y = self._calculate_loss(x)
+        loss, r_loss, l_loss, y = self._calculate_loss(x, target)
         return loss.item(), r_loss.item(), l_loss.item(), y
 
     def save_checkpoint(self, path):
