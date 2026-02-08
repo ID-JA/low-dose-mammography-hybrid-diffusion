@@ -139,12 +139,11 @@ if __name__ == '__main__':
             if i == 0 and not args.no_save and eid % cfg.image_frequency == 0:
                 # Prepare a grid: Top row: Input, Middle: Target (if exists), Bottom: Output
                 if target is not None:
-                     vis = torch.cat([x, target, y], dim=0) # Concatenate along batch? No, dim=0 creates one long column of batches.
-                     # Better: Create a row per sample.
-                     # save_image expects (B, C, H, W).
-                     # We want to show side-by-side. 
-                     # Let's just save y for now to avoid breaking shape logic, OR simpler:
-                     save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
+                     x, target, y = x.cpu(), target.cpu(), y.cpu()
+                     # Stack to (B, 3, C, H, W) then flatten to (3*B, C, H, W)
+                     # nrow=3 allows displaying Input | Target | Reconstruction side-by-side
+                     vis = torch.stack([x, target, y], dim=1).flatten(0, 1)
+                     save_image(vis, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=3, normalize=True, value_range=(-1,1))
                 else:
                      save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
 

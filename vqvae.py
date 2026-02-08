@@ -235,6 +235,56 @@ class VQVAE(HelperModule):
 
         return decoder_outputs[-1], diffs, encoder_outputs, decoder_outputs, id_outputs
 
+    def encode(self, x):
+        """
+        Returns the list of encoder outputs (continuous latents) from bottom-up.
+        """
+        encoder_outputs = []
+        for enc in self.encoders:
+            if len(encoder_outputs):
+                encoder_outputs.append(enc(encoder_outputs[-1]))
+            else:
+                encoder_outputs.append(enc(x))
+        return encoder_outputs
+
+    def decode_latents(self, encoder_outputs):
+        """
+        Reconstructs image from the list of encoder outputs (continuous).
+        This runs the quantization / top-down decoder path.
+        """
+        decoder_outputs = []
+        code_outputs = []
+        upscale_counts = []
+        diffs = []
+        id_outputs = []
+        
+        # We need to reuse the same logic as forward() loop
+        # Note: forward() loop iterates: range(self.nb_levels-1, -1, -1)
+        for l in range(self.nb_levels-1, -1, -1):
+            codebook, decoder = self.codebooks[l], self.decoders[l]
+
+            # In forward: torch.cat([encoder_outputs[l], decoder_outputs[-1]], axis=1)
+            # decoder_outputs[-1] is the output of the *previous iteration* (which is the level above).
+            
+            if len(decoder_outputs): 
+                code_q, code_d, emb_id = codebook(torch.cat([encoder_outputs[l], decoder_outputs[-1]], axis=1))
+            else:
+                code_q, code_d, emb_id = codebook(encoder_outputs[l])
+            
+            diffs.append(code_d)
+            id_outputs.append(emb_id)
+
+            code_outputs = [self.upscalers[i](c, upscale_counts[i]) for i, c in enumerate(code_outputs)]
+            upscale_counts = [u+1 for u in upscale_counts]
+            
+            # The decoder takes the quantized code this level + upscaled codes from previous levels
+            decoder_outputs.append(decoder(torch.cat([code_q, *code_outputs], axis=1)))
+
+            code_outputs.append(code_q)
+            upscale_counts.append(0)
+
+        return decoder_outputs[-1]
+
     def decode_codes(self, *cs):
         decoder_outputs = []
         code_outputs = []

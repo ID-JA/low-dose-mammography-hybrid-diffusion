@@ -7,7 +7,7 @@ _common = {
     'checkpoint_frequency':         4,
     'image_frequency':              1,
     'test_size':                    0.1,
-    'nb_workers':                   4,
+    'nb_workers':                   1,
 }
 
 _cbis_ddsm = {
@@ -32,4 +32,15 @@ _cbis_ddsm = {
 
 HPS_VQVAE = {
     'cbis-ddsm':            SimpleNamespace(**(_common | _cbis_ddsm)),
+}
+
+_diffusion_common = {
+    'timesteps': 1000,
+    'unet_dim': 64,
+    'unet_dim_mults': (1, 2, 4),
+    'learning_rate': 2e-5,
+}
+
+HPS_DIFFUSION = {
+    'cbis-ddsm': SimpleNamespace(**(_common | _cbis_ddsm | _diffusion_common)),
 }
