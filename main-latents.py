@@ -91,7 +91,7 @@ if __name__ == '__main__':
     pb = tqdm(train_loader, disable=args.no_tqdm)
     nb_processed = 0
     for i, (x, _) in enumerate(pb):
-        with torch.no_grad(), torch.cuda.amp.autocast():
+        with torch.no_grad(), torch.amp.autocast('cuda'):
             x = x.to(device)
             idx = net(x)[-1][::-1]
 
@@ -112,7 +112,7 @@ if __name__ == '__main__':
     pb = tqdm(test_loader, disable=args.no_tqdm)
     nb_processed = 0
     for i, (x, _) in enumerate(pb):
-        with torch.no_grad(), torch.cuda.amp.autocast():
+        with torch.no_grad(), torch.amp.autocast('cuda'):
             x = x.to(device)
             idx = net(x)[-1][::-1]
 

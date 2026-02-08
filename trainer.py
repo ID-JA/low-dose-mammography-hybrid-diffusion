@@ -21,7 +21,7 @@ class VQVAETrainer:
         self.opt.zero_grad()
 
         self.beta = cfg.beta
-        self.scaler = torch.cuda.amp.GradScaler(enabled=not args.no_amp)
+        self.scaler = torch.amp.GradScaler("cuda",enabled=not args.no_amp)
 
         self.update_frequency = math.ceil(cfg.batch_size / cfg.mini_batch_size)
         self.train_steps = 0
@@ -36,7 +36,7 @@ class VQVAETrainer:
     # another function can then call step
     def train(self, x: torch.FloatTensor):
         self.net.train()
-        with torch.cuda.amp.autocast(enabled=self.scaler.is_enabled()):
+        with torch.amp.autocast("cuda", enabled=self.scaler.is_enabled()):
             loss, r_loss, l_loss, y = self._calculate_loss(x)
         self.scaler.scale(loss / self.update_frequency).backward()
 

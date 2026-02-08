@@ -1,27 +1,26 @@
 import torch
-import torchvision
 from pathlib import Path
 from datasets_cbis import CBISDDSM
 
 def get_dataset(task: str, cfg, shuffle_train=True, shuffle_test=False, return_dataset=False):
     if task == 'cbis-ddsm':
         # Assuming data is in sibling folder ../low-dose-mammography-hybrid-diffusion/data/
-        project_root = Path("..") / "low-dose-mammography-hybrid-diffusion"
+        project_root = Path("./")
         # Using the same resize as provided in cfg (1024, 768)
         resize_hw = (cfg.image_shape[1], cfg.image_shape[2]) 
         
         train_dataset = CBISDDSM(
-            case_csv_path=str(project_root / "data/raw/csv/mass_case_description_train_set.csv"),
-            jpeg_root=str(project_root / "data/raw/jpeg"),
-            dicom_info_csv=str(project_root / "data/raw/csv/dicom_info.csv"),
+            case_csv_path=str(project_root / "data/csv/mass_case_description_train_set.csv"),
+            jpeg_root=str(project_root / "data/jpeg"),
+            dicom_info_csv=str(project_root / "data/csv/dicom_info.csv"),
             mode="full",
             return_mask=False,
             resize_hw=resize_hw
         )
         test_dataset = CBISDDSM(
-            case_csv_path=str(project_root / "data/raw/csv/mass_case_description_test_set.csv"),
-            jpeg_root=str(project_root / "data/raw/jpeg"),
-            dicom_info_csv=str(project_root / "data/raw/csv/dicom_info.csv"),
+            case_csv_path=str(project_root / "data/csv/mass_case_description_test_set.csv"),
+            jpeg_root=str(project_root / "data/jpeg"),
+            dicom_info_csv=str(project_root / "data/csv/dicom_info.csv"),
             mode="full",
             return_mask=False,
             resize_hw=resize_hw
