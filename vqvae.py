@@ -285,6 +285,49 @@ class VQVAE(HelperModule):
 
         return decoder_outputs[-1]
 
+    def decode_continuous(self, encoder_outputs):
+        """Decode without quantisation — pass continuous latents through
+        ``codebook.conv_in`` but skip nearest-neighbour lookup.
+
+        This is the ``force_not_quantize`` path needed by LDM at sampling time:
+        the diffusion model has already denoised the latent, so re-quantising
+        would only add noise.
+
+        Parameters
+        ----------
+        encoder_outputs : list[Tensor]
+            Bottom-up encoder feature maps (same order as :meth:`encode`).
+
+        Returns
+        -------
+        Tensor : reconstructed image (B, C_img, H, W)
+        """
+        decoder_outputs = []
+        code_outputs = []
+        upscale_counts = []
+
+        for l in range(self.nb_levels - 1, -1, -1):
+            codebook, decoder = self.codebooks[l], self.decoders[l]
+
+            # --- continuous projection (no quantisation) ---
+            if len(decoder_outputs):
+                proj_input = torch.cat([encoder_outputs[l], decoder_outputs[-1]], dim=1)
+            else:
+                proj_input = encoder_outputs[l]
+            # codebook.conv_in projects to embed_dim (same as quantised output)
+            code_q = codebook.conv_in(proj_input)
+
+            code_outputs = [self.upscalers[i](c, upscale_counts[i])
+                            for i, c in enumerate(code_outputs)]
+            upscale_counts = [u + 1 for u in upscale_counts]
+            decoder_outputs.append(
+                decoder(torch.cat([code_q, *code_outputs], dim=1)))
+
+            code_outputs.append(code_q)
+            upscale_counts.append(0)
+
+        return decoder_outputs[-1]
+
     def decode_codes(self, *cs):
         decoder_outputs = []
         code_outputs = []

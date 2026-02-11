@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from math import sqrt
 
+from torchmetrics.functional import peak_signal_noise_ratio, structural_similarity_index_measure
+
 from trainer import VQVAETrainer
 from datasets import get_dataset
 from hps import HPS_VQVAE as HPS
@@ -52,20 +54,25 @@ if __name__ == '__main__':
         imgs = []
         pb = tqdm(total=cfg.batch_size)
         for batch in test_loader:
-            if len(batch) == 3:
-                x, target, _ = batch
-            else:
+            if len(batch) == 3 and not isinstance(batch[1], dict):
+                _, x, _ = batch           # use clean image
+            elif len(batch) == 2:
                 x, _ = batch
-                target = None # reconstruction
+            else:
+                x = batch[0]
 
-            loss, r_loss, l_loss, y = trainer.eval(x, target)
-            imgs.append(y.cpu())
+            loss, r_loss, l_loss, y = trainer.eval(x, target=None)
+            x_cpu, y_cpu = x.cpu().clamp(0, 1), y.cpu().clamp(0, 1)
+            psnr = peak_signal_noise_ratio(y_cpu, x_cpu, data_range=1.0)
+            ssim = structural_similarity_index_measure(y_cpu, x_cpu, data_range=1.0)
+            print(f"  PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f}")
+            imgs.append(y_cpu)
             nb_generated += y.shape[0]
             pb.update(y.shape[0])
             if nb_generated >= cfg.batch_size:
                 break
         print(f"> Assembling Image")
-        save_image(torch.cat(imgs, dim=0), file_name, nrow=int(sqrt(cfg.batch_size)), normalize=True, value_range=(-1,1))
+        save_image(torch.cat(imgs, dim=0), file_name, nrow=int(sqrt(cfg.batch_size)), normalize=True, value_range=(0, 1))
         print(f"> Saved to {file_name}")
         exit()
         
@@ -91,28 +98,16 @@ if __name__ == '__main__':
         epoch_start_time = time.time()
         pb = tqdm(train_loader, disable=args.no_tqdm)
         for i, batch in enumerate(pb):
+            # VQ-VAE trains as autoencoder on CLEAN images only.
+            # Dataset with return_pair=True returns (degraded, clean, meta).
             if len(batch) == 3 and not isinstance(batch[1], dict):
-                # (degraded, clean, meta)
-                x, target, meta = batch
+                _, x, meta = batch        # use clean image as input
+            elif len(batch) == 2:
+                x, meta = batch
             else:
-                # (x, meta) or (x, mask, meta) - ignoring mask logic for simple VQVAE training here
-                # If len is 2: x, meta
-                # If len is 3 and 2nd is mask: x, mask, meta.
-                # Simplification: assume if 3rd is meta, unpack accordingly.
-                # For now, let's stick to the structure we expect.
-                if len(batch) == 3:
-                     # Could be (x, mask, meta) or (degraded, clean, meta)
-                     # In CBISDDSM with pair=True, it returns (deg, clean, meta). Clean is Tensor.
-                     # With mask=True, returns (x, mask, meta). Mask is Tensor.
-                     x, target, _ = batch
-                     if isinstance(target, dict): # Should not happen based on CBISDDSM logic order
-                         x, _ = batch 
-                         target = None
-                else:
-                    x, _ = batch
-                    target = None
+                x = batch[0]
 
-            loss, r_loss, l_loss, _ = trainer.train(x, target)
+            loss, r_loss, l_loss, _ = trainer.train(x, target=None)
             epoch_loss += loss
             epoch_r_loss += r_loss
             epoch_l_loss += l_loss
@@ -120,36 +115,38 @@ if __name__ == '__main__':
         print(f"> Training loss: {epoch_loss / len(train_loader)} [r_loss: {epoch_r_loss / len(train_loader)}, l_loss: {epoch_l_loss / len(train_loader)}]")
         
         epoch_loss, epoch_r_loss, epoch_l_loss = 0.0, 0.0, 0.0
+        epoch_psnr, epoch_ssim, eval_count = 0.0, 0.0, 0
         pb = tqdm(test_loader, disable=args.no_tqdm)
         for i, batch in enumerate(pb):
+            # VQ-VAE evaluates as autoencoder on CLEAN images only.
             if len(batch) == 3 and not isinstance(batch[1], dict):
-                x, target, _ = batch
+                _, x, _ = batch           # use clean image
+            elif len(batch) == 2:
+                x, _ = batch
             else:
-                if len(batch) == 3:
-                     x, target, _ = batch
-                else:
-                    x, _ = batch
-                    target = None
+                x = batch[0]
 
-            loss, r_loss, l_loss, y = trainer.eval(x, target)
+            loss, r_loss, l_loss, y = trainer.eval(x, target=None)
             epoch_loss += loss
             epoch_r_loss += r_loss
             epoch_l_loss += l_loss
+
+            x_cpu, y_cpu = x.cpu().clamp(0, 1), y.cpu().clamp(0, 1)
+            epoch_psnr += peak_signal_noise_ratio(y_cpu, x_cpu, data_range=1.0).item()
+            epoch_ssim += structural_similarity_index_measure(y_cpu, x_cpu, data_range=1.0).item()
+            eval_count += 1
+
             pb.set_description(f"evaluation: {epoch_loss / (i+1)} [r_loss: {epoch_r_loss/ (i+1)}, l_loss: {epoch_l_loss / (i+1)}]")
             if i == 0 and not args.no_save and eid % cfg.image_frequency == 0:
-                # Prepare a grid: Top row: Input, Middle: Target (if exists), Bottom: Output
-                if target is not None:
-                     x, target, y = x.cpu(), target.cpu(), y.cpu()
-                     # Stack to (B, 3, C, H, W) then flatten to (3*B, C, H, W)
-                     # nrow=3 allows displaying Input | Target | Reconstruction side-by-side
-                     vis = torch.stack([x, target, y], dim=1).flatten(0, 1)
-                     save_image(vis, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=3, normalize=True, value_range=(-1,1))
-                else:
-                     save_image(y, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=int(sqrt(cfg.mini_batch_size)), normalize=True, value_range=(-1,1))
+                # Grid: Input | Reconstruction  (autoencoder, no separate target)
+                x_vis, y_vis = x.cpu(), y.cpu()
+                vis = torch.stack([x_vis, y_vis], dim=1).flatten(0, 1)
+                save_image(vis, img_dir / f"recon-{str(eid).zfill(4)}.{'jpg' if args.save_jpg else 'png'}", nrow=2, normalize=True, value_range=(0, 1))
 
         if eid % cfg.checkpoint_frequency == 0 and not args.no_save:
             trainer.save_checkpoint(chk_dir / f"{args.task}-state-dict-{str(eid).zfill(4)}.pt")
 
         print(f"> Evaluation loss: {epoch_loss / len(test_loader)} [r_loss: {epoch_r_loss / len(test_loader)}, l_loss: {epoch_l_loss / len(test_loader)}]")
+        print(f"> PSNR: {epoch_psnr / max(eval_count, 1):.2f} dB | SSIM: {epoch_ssim / max(eval_count, 1):.4f}")
         print(f"> Epoch time taken: {time.time() - epoch_start_time:.2f} seconds.")
         print()
