@@ -889,7 +889,7 @@ class LatentDiffusion(nn.Module):
         else:
             z_out = self.p_sample_loop(z_cond, shape, verbose=verbose)
 
-        return self.decode_first_stage(z_out)
+        return self.decode_first_stage(z_out, force_not_quantize=True)
 
 
 # ======================================================================
