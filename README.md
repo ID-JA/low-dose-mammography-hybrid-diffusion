@@ -177,7 +177,7 @@ This project builds upon and adapts code from the following open-source reposito
 
 ```bibtex
 @misc{razavi2019generating,
-      title={Generating Diverse High-Fidelity Images with VQ-VAE-2},
+      title={Generating Diverse High-Fidelity Images with VQ-VAE-2}, 
       author={Ali Razavi and Aaron van den Oord and Oriol Vinyals},
       year={2019},
       eprint={1906.00446},
@@ -185,16 +185,17 @@ This project builds upon and adapts code from the following open-source reposito
       primaryClass={cs.LG}
 }
 
-@inproceedings{rombach2022high,
-      title={High-Resolution Image Synthesis with Latent Diffusion Models},
-      author={Robin Rombach and Andreas Blattmann and Dominik Lorber and Patrick Esser and Bj{\"o}rn Ommer},
-      booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-      year={2022},
-      pages={10684--10695}
+@misc{rombach2021highresolution,
+      title={High-Resolution Image Synthesis with Latent Diffusion Models}, 
+      author={Robin Rombach and Andreas Blattmann and Dominik Lorenz and Patrick Esser and Björn Ommer},
+      year={2021},
+      eprint={2112.10752},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
 }
 
 @misc{bachlechner2020rezero,
-      title={ReZero is All You Need: Fast Convergence at Large Depth},
+      title={ReZero is All You Need: Fast Convergence at Large Depth}, 
       author={Thomas Bachlechner and Bodhisattwa Prasad Majumder and Huanru Henry Mao and Garrison W. Cottrell and Julian McAuley},
       year={2020},
       eprint={2003.04887},
