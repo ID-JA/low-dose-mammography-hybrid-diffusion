@@ -1,150 +1,200 @@
-# Generating Diverse High-Fidelity Images with VQ-VAE-2 [Work in Progress]
-PyTorch implementation of Hierarchical, Vector Quantized, Variational Autoencoders (VQ-VAE-2) 
-from the paper "Generating Diverse High-Fidelity Images with VQ-VAE-2"
+# Low-Dose Mammography Restoration via Hybrid Diffusion
 
-Original paper can be found [here](https://arxiv.org/abs/1906.00446)
+A PyTorch implementation of a two-stage hybrid generative pipeline for restoring low-dose mammograms to full-dose quality. The approach combines a **VQ-VAE-2** (Vector Quantized Variational Autoencoder) as a learned first-stage compressor with a **Latent Diffusion Model (LDM)** that performs image-to-image restoration entirely in the compressed latent space.
 
-Vector Quantizing layer based off implementation by [@rosinality](https://github.com/rosinality) 
-found [here](https://github.com/rosinality/vq-vae-2-pytorch).
+## Overview
 
-Aiming for a focus on supporting an arbitrary number of VQ-VAE "levels". Most implementations in 
-PyTorch typically only use 2 which is limiting at higher resolutions. This repository contains 
-checkpoints for a 3-level and 5-level VQ-VAE-2, trained on FFHQ1024.
+Low-dose mammography reduces radiation exposure but introduces noise that degrades diagnostic image quality. This project addresses the problem by:
 
-This project will not only contain the VQ-VAE-2 architecture, but also an example autoregressive 
-prior and latent dataset extraction.
+1. **Stage 1 — VQ-VAE-2**: A hierarchical 5-level VQ-VAE-2 is trained on clean (full-dose) mammograms to learn a compact discrete latent representation. Once trained, the encoder/decoder are frozen and used as the first-stage model.
+2. **Stage 2 — Latent Diffusion Model**: A UNet-based denoising diffusion model operates in the latent space of the frozen VQ-VAE-2. It is conditioned on the degraded (low-dose) latent via concatenation and learns to denoise toward the clean latent. At inference time, DDIM sampling produces a restored latent that is decoded back to pixel space.
 
-> This project is very much Work-in-Progress.
-> VQ-VAE-2 model is mostly complete. PixelSnail prior models are still experimental
-> and most definitely do not work.
+The dataset used is **CBIS-DDSM**, with synthetic low-dose degradation applied at a configurable noise level.
+
+## Project Structure
+
+```
+├── hps.py                 # All hyperparameters for VQ-VAE-2 and LDM
+├── main-vqvae.py          # Training / evaluation script for VQ-VAE-2
+├── main-diffusion.py      # Training script for Latent Diffusion Model
+├── main-latents.py        # Latent dataset extraction from trained VQ-VAE-2
+├── vqvae.py               # VQ-VAE-2 architecture (encoder, decoder, codebook)
+├── vqvae2_wrapper.py      # Wrapper exposing VQ-VAE-2 as an LDM first-stage model
+├── diffusion.py           # UNet, LatentDiffusion, DDIMSampler, LitEma
+├── trainer.py             # VQ-VAE-2 training loop helper
+├── datasets.py            # Dataset loaders (CBIS-DDSM)
+├── datasets_cbis.py       # CBIS-DDSM dataset class with paired degradation
+├── helper.py              # Utility functions
+├── logger.py              # Logging utilities
+└── preprocessing/
+    └── degrade.py         # Low-dose noise simulation
+```
+
+## Requirements
+
+- Python 3.10+
+- PyTorch 2.0+ (with CUDA support recommended)
+- torchvision, torchmetrics, tqdm, pandas, Pillow
 
 ## Usage
-### VQ-VAE-2 Usage
-Run VQ-VAE-2 training using the config `task_name` found in `hps.py`. Defaults to `cifar10`:
-```
-python main-vqvae.py --task task_name
+
+### 1. Train VQ-VAE-2 (Stage 1)
+
+Train the VQ-VAE-2 autoencoder on clean mammograms:
+
+```bash
+python main-vqvae.py --task cbis-ddsm
 ```
 
-Evaluate VQ-VAE-2 from parameters `state_dict_path` on task `task_name`. Defaults to `cifar10`:
-```
-python main-vqvae.py --task task_name --load-path state_dict_path --evaluate
+Evaluate a trained VQ-VAE-2 checkpoint:
+
+```bash
+python main-vqvae.py --task cbis-ddsm --load-path <checkpoint_path> --evaluate
 ```
 
-Other useful flags:
-```
---no-save       # disables saving of files during training
---cpu           # do not use GPU
---batch-size    # overrides batch size in cfg.py, useful for evaluating on larger batch size
---no-tqdm       # disable tqdm status bars
---no-save       # disables saving of files
---no-amp        # disables using native AMP (Automatic Mixed Precision) operations
---save-jpg      # save all images as jpg instead of png, useful for extreme resolutions
+**Available flags:**
+
+| Flag           | Description                               |
+| -------------- | ----------------------------------------- |
+| `--cpu`        | Disable GPU, run on CPU                   |
+| `--batch-size` | Override batch size from `hps.py`         |
+| `--load-path`  | Resume training from a saved checkpoint   |
+| `--no-tqdm`    | Disable progress bars                     |
+| `--no-save`    | Disable saving checkpoints and images     |
+| `--no-amp`     | Disable Automatic Mixed Precision         |
+| `--save-jpg`   | Save output images as JPEG instead of PNG |
+| `--evaluate`   | Run evaluation only (no training)         |
+
+### 2. Train Latent Diffusion Model (Stage 2)
+
+Train the LDM conditioned on degraded latents, using the frozen VQ-VAE-2:
+
+```bash
+python main-diffusion.py --task cbis-ddsm --vqvae-path <path_to_vqvae_checkpoint>
 ```
 
-### Latent Dataset Generation
-Run latent dataset generation using VQ-VAE-2 saved at `path` that was trained on task `task_name`. Defaults to `cifar10`:
-```
-python main-latents.py path --task task_name
-```
-Result is saved in `latent-data` directory.
+Resume LDM training from a checkpoint:
 
-Other useful flags:
-```
---cpu           # do not use GPU
---batch-size    # overrides batch size in cfg.py, useful for evaluating on larger batch size
---no-tqdm       # disable tqdm status bars
---no-save       # disables saving of files
---no-amp        # disables using native AMP (Automatic Mixed Precision) operations
+```bash
+python main-diffusion.py --task cbis-ddsm --vqvae-path <vqvae_checkpoint> --load-path <diffusion_checkpoint>
 ```
 
-### Discrete Prior Usage
-Run level `level` PixelSnail discrete prior training using the config `task_name` found in `hps.py` using latent dataset saved at path `latent_dataset.pt` and VQ-VAE `vqvae_path` to dequantize conditioning variables. Defaults to `cifar10`:
-```
-python main-pixelsnail.py latent_dataset.pt vqvae_path.pt level --task task_name
-```
+**Available flags:**
 
-Other useful flags:
-```
---cpu           # do not use GPU
---load-path     # resume from saved state on disk
---batch-size    # overrides batch size in cfg.py, useful for evaluating on larger batch size
---save-jpg      # save all images as jpg instead of png, useful for extreme resolutions
---no-tqdm       # disable tqdm status bars
---no-save       # disables saving of files
-```
+| Flag           | Description                                            |
+| -------------- | ------------------------------------------------------ |
+| `--cpu`        | Disable GPU, run on CPU                                |
+| `--vqvae-path` | **(Required)** Path to pre-trained VQ-VAE-2 checkpoint |
+| `--load-path`  | Resume diffusion training from a saved checkpoint      |
+| `--batch-size` | Override batch size from `hps.py`                      |
+| `--no-tqdm`    | Disable progress bars                                  |
+| `--no-save`    | Disable saving checkpoints and images                  |
+| `--save-jpg`   | Save output images as JPEG instead of PNG              |
 
-### Sample Generation 
-Run sampling script on trained VQ-VAE-2 and PixelSnail priors using the config `task_name` (default `cifar10`) found in `hps.py`.
-The first positional argument is the path to the VQ-VAE-2 checkpoint. The remaining `L` positional arguments are the PixelSnail 
-prior checkpoints from level `0` to `L`.
-```
-python main-sample.py vq_vae_path.pt pixelsnail_0_path.pt pixel_snail_1_path.pt ... --task task_name
+### 3. Extract Latent Dataset (Optional)
+
+Generate a latent dataset from a trained VQ-VAE-2 for downstream use:
+
+```bash
+python main-latents.py <path_to_vqvae_checkpoint> --task cbis-ddsm
 ```
 
-Other useful flags:
-```
---cpu           # do not use GPU
---batch-size    # overrides batch size in cfg.py, useful for evaluating on larger batch size
---nb-samples    # number of samples to generate. defaults to 1.
---no-tqdm       # disable tqdm status bars
---no-save       # disables saving of files
---no-amp        # disables using native AMP (Automatic Mixed Precision) operations
---save-jpg      # save all images as jpg instead of png, useful for extreme resolutions
---temperature   # controls softmax temperature during sampling
-```
+## Hyperparameters
 
-## Modifications
-- Replacing residual layers with ReZero layers.
+All hyperparameters are defined in `hps.py`.
 
-## Samples
-*Reconstructions from FFHQ1024 using a 3-level VQ-VAE-2*
-![Reconstructions from FFHQ1024 using a 3-level VQ-VAE-2](recon-example.png)
+### VQ-VAE-2
 
-## Checkpoints
-[FFHQ1024 - 3-level VQ-VAE-2](ffhq1024-state-dict-0017.pt)
+| Hyperparameter             | Value           |
+| -------------------------- | --------------- |
+| Input image shape          | 1 × 1024 × 768  |
+| Hidden channels            | 128             |
+| Residual channels          | 32              |
+| Residual layers per block  | 2               |
+| Hierarchical levels        | 5               |
+| Scaling rates (per level)  | [4, 2, 2, 2, 2] |
+| Embedding dimension        | 64              |
+| Codebook entries           | 512             |
+| Codebook EMA decay         | 0.99            |
+| Residual block type        | ReZero          |
+| Optimizer                  | Adam            |
+| Learning rate              | 1e-4            |
+| Batch size                 | 4               |
+| Commitment loss weight (β) | 0.25            |
+| Reconstruction loss        | MSE             |
+| Mixed precision (AMP)      | Yes             |
+| Max epochs                 | 100             |
 
-[FFHQ1024 - 5-level VQ-VAE-2](ffhq1024-large-state-dict-0010.pt)
+### Latent Diffusion Model
 
-### Roadmap
-- [X] Server mode (no fancy printing)
-- [X] Experiment directories (containing logs / checkpoints / etc)
-- [X] Accumulated gradient training (for larger batch sizes on limited resources)
-- [X] Samples and checkpoints on FFHQ1024
-- [X] Latent dataset generation
-- [ ] Autoregressive prior models / training scripts
-- [X] Full system sampling
-- [ ] Prettier outputs
-- [ ] Output logging
+| Hyperparameter               | Value                             |
+| ---------------------------- | --------------------------------- |
+| Diffusion timesteps (T)      | 1000                              |
+| Noise schedule               | Linear                            |
+| β_start                      | 0.0015                            |
+| β_end                        | 0.0195                            |
+| UNet input channels          | 256 (concat conditioning)         |
+| UNet output channels         | 128                               |
+| Base model channels          | 192                               |
+| Channel multipliers          | [1, 2, 4]                         |
+| Residual blocks per level    | 2                                 |
+| Self-attention at levels     | [1, 2]                            |
+| Attention head channels      | 64                                |
+| Dropout                      | 0.0                               |
+| Gradient checkpointing       | Yes                               |
+| Conditioning strategy        | Concatenation                     |
+| Optimizer                    | AdamW                             |
+| Learning rate                | 2e-4                              |
+| Batch size                   | 4                                 |
+| Max epochs                   | 200                               |
+| Gradient clipping (max norm) | 1.0                               |
+| Loss                         | L_simple (MSE on predicted noise) |
+| VLB (ELBO) weight            | 0.0 (disabled)                    |
+| EMA decay                    | 0.9999                            |
+| DDIM sampling steps          | 50                                |
+| DDIM η                       | 0.0 (deterministic)               |
 
-### Citations
-**Generating Diverse High-Fidelity Images with VQ-VAE-2**
-```
+### Dataset
+
+| Parameter                 | Value                    |
+| ------------------------- | ------------------------ |
+| Dataset                   | CBIS-DDSM                |
+| Image mode                | Grayscale (C=1)          |
+| Resolution                | 1024 × 768               |
+| Noise level (degradation) | 0.2                      |
+| Train/test split          | Official CBIS-DDSM split |
+| Data loader workers       | 4                        |
+
+## Acknowledgements
+
+This project builds upon and adapts code from the following open-source repositories:
+
+- **[vvvm23/vqvae-2](https://github.com/vvvm23/vqvae-2)** — The VQ-VAE-2 architecture, hierarchical encoder/decoder design, codebook with EMA updates, and ReZero residual blocks are based on this implementation of _"Generating Diverse High-Fidelity Images with VQ-VAE-2"_ (Razavi et al., 2019).
+
+- **[CompVis/latent-diffusion](https://github.com/CompVis/latent-diffusion)** — The Latent Diffusion Model, UNet backbone, noise schedule, DDIM sampler, LitEma, and training/loss formulation are adapted from the official implementation of _"High-Resolution Image Synthesis with Latent Diffusion Models"_ (Rombach et al., 2022).
+
+## Citations
+
+```bibtex
 @misc{razavi2019generating,
-      title={Generating Diverse High-Fidelity Images with VQ-VAE-2}, 
+      title={Generating Diverse High-Fidelity Images with VQ-VAE-2},
       author={Ali Razavi and Aaron van den Oord and Oriol Vinyals},
       year={2019},
       eprint={1906.00446},
       archivePrefix={arXiv},
       primaryClass={cs.LG}
 }
-```
 
-**PixelSNAIL: An Improved Autoregressive Generative Model**
-```
-@misc{chen2017pixelsnail,
-      title={PixelSNAIL: An Improved Autoregressive Generative Model}, 
-      author={Xi Chen and Nikhil Mishra and Mostafa Rohaninejad and Pieter Abbeel},
-      year={2017},
-      eprint={1712.09763},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
+@inproceedings{rombach2022high,
+      title={High-Resolution Image Synthesis with Latent Diffusion Models},
+      author={Robin Rombach and Andreas Blattmann and Dominik Lorber and Patrick Esser and Bj{\"o}rn Ommer},
+      booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+      year={2022},
+      pages={10684--10695}
 }
-```
 
-**ReZero is All You Need: Fast Convergence at Large Depth**
-```
 @misc{bachlechner2020rezero,
-      title={ReZero is All You Need: Fast Convergence at Large Depth}, 
+      title={ReZero is All You Need: Fast Convergence at Large Depth},
       author={Thomas Bachlechner and Bodhisattwa Prasad Majumder and Huanru Henry Mao and Garrison W. Cottrell and Julian McAuley},
       year={2020},
       eprint={2003.04887},

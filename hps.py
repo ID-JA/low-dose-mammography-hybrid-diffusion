@@ -7,7 +7,7 @@ _common = {
     'checkpoint_frequency':         4,
     'image_frequency':              1,
     'test_size':                    0.1,
-    'nb_workers':                   1,
+    'nb_workers':                   4,
 }
 
 _cbis_ddsm = {
@@ -46,15 +46,15 @@ _diffusion_common = {
     'model_channels':     192,          # base channel width
     'channel_mult':       [1, 2, 4],    # → 192, 384, 768
     'num_res_blocks':     2,
-    'attention_levels':   [2],          # self-attn at deepest level (32×24)
+    'attention_levels':   [1, 2],        # self-attn at two deepest levels
     'dropout':            0.0,
     'num_head_channels':  64,           # → heads = ch // 64
-    'use_checkpoint':     False,        # gradient checkpointing (saves VRAM)
+    'use_checkpoint':     True,         # gradient checkpointing (enables larger batch on A100)
 
     # --- training ---
-    'learning_rate':      1e-4,
-    'batch_size':         2,
-    'mini_batch_size':    2,
+    'learning_rate':      2e-4,         # scaled with batch_size=4 (linear scaling rule)
+    'batch_size':         4,
+    'mini_batch_size':    4,
     'max_epochs':         200,
     'grad_clip_norm':     1.0,          # max gradient norm (official LDM uses 1.0)
 
