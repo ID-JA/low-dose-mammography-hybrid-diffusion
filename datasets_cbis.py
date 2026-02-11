@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 from PIL import Image
 
 import torch
+from torchvision import transforms
 from torch.utils.data import Dataset
-
+from preprocessing.degrade import simulate_low_dose
 
 @dataclass
 class CBISPathResolver:
@@ -134,12 +134,8 @@ class CBISDDSM(Dataset):
     """
     Improved CBIS-DDSM loader using dicom_info.csv mapping.
     Fast + deterministic (no glob searching).
-
-    Returns:
-        x:   Tensor [1,H,W] float32 in [0,1]
-        meta dict
-    Optionally:
-        mask: Tensor [1,H,W] float32 {0,1}
+    
+    Supports 'paired' mode: returns (degraded_x, clean_x, meta).
     """
 
     def __init__(
@@ -149,11 +145,15 @@ class CBISDDSM(Dataset):
         dicom_info_csv: str,
         mode: str = "full", 
         return_mask: bool = False,
+        return_pair: bool = False,
+        noise_level: float = 0.2,
         resize_hw: Optional[Tuple[int, int]] = (1024, 768),
     ):
         self.df = pd.read_csv(case_csv_path)
         self.jpeg_root = Path(jpeg_root)
         self.return_mask = return_mask
+        self.return_pair = return_pair
+        self.noise_level = noise_level
         self.resize_hw = resize_hw
 
         assert mode in ["full", "crop"], "mode must be 'full' or 'crop'"
@@ -169,19 +169,16 @@ class CBISDDSM(Dataset):
             dicom_info_csv=Path(dicom_info_csv),
         )
 
+        if self.resize_hw:
+            self.transform = transforms.Compose([
+                transforms.Resize(self.resize_hw, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.ToTensor()
+            ])
+        else:
+            self.transform = transforms.ToTensor()
+
     def __len__(self):
         return len(self.df)
-
-    def _read_image(self, abs_path: Path) -> Image.Image:
-        img = Image.open(abs_path).convert("L")
-        if self.resize_hw is not None:
-            # TODO: in future we don't need to resize the images resize_hw = (H, W)
-            img = img.resize((self.resize_hw[1], self.resize_hw[0]), Image.BILINEAR)
-        return img
-
-    def _to_tensor01(self, img: Image.Image) -> torch.Tensor:
-        arr = np.array(img, dtype=np.float32) / 255.0
-        return torch.from_numpy(arr).unsqueeze(0)  # [1,H,W]
 
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
@@ -193,8 +190,8 @@ class CBISDDSM(Dataset):
             case_path = row[self.crop_col]
             img_path = self.resolver.resolve(case_path, kind="crop")
 
-        img = self._read_image(img_path)
-        x = self._to_tensor01(img)
+        img = Image.open(img_path).convert("L")
+        clean_x = self.transform(img)
 
         meta = {
             "patient_id": row.get("patient_id", None),
@@ -207,16 +204,20 @@ class CBISDDSM(Dataset):
             "case_path": str(case_path),
         }
 
+        if self.return_pair:
+            degraded_x = simulate_low_dose(clean_x, noise_level=self.noise_level)
+            return degraded_x, clean_x, meta
+
         if not self.return_mask:
-            return x, meta
+            return clean_x, meta
 
         mask_case_path = row.get(self.mask_col, None)
         if pd.isna(mask_case_path) or mask_case_path is None:
-            mask = torch.zeros_like(x)
+            mask = torch.zeros_like(clean_x)
         else:
             mask_path = self.resolver.resolve(mask_case_path, kind="mask")
-            mask_img = self._read_image(mask_path)
-            mask_arr = (np.array(mask_img, dtype=np.float32) > 0).astype(np.float32)
-            mask = torch.from_numpy(mask_arr).unsqueeze(0)
+            mask_img = Image.open(mask_path).convert("L")
+            mask = self.transform(mask_img)
+            mask = (mask > 0).float()
 
-        return x, mask, meta
+        return clean_x, mask, meta
